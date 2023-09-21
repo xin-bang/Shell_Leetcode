@@ -1,0 +1,102 @@
+#!/bin/bash
+
+ls *primer.fasta |while read id; do mv ${id} ${id%.*}.fna; done
+
+######## 遍历目录中的所有.fasta文件,修改序列文件名称
+for file in ./*.fasta; do
+    if [[ -f "$file" ]]; then
+        # 提取文件名和扩展名
+        filename=$(basename "$file")
+        # extension="${filename##*.}"
+        intersion="${filename%.*}"
+	
+        # 提取文件名中的标识（例如CP020588.1或OX550212.1）
+        identifier="${filename%%_*}"
+	
+	#
+	species="${intersion#*_}"
+        
+        # 去掉标识中的下划线，并用连字符替换空格
+        identifier=$(echo "$species-$identifier")
+        
+        # 构建新文件名
+        new_filename="$identifier.fasta"
+        
+        # 重命名文件
+        mv "$file" "$new_filename"
+        echo "重命名文件 $file 为 $new_filename"
+    fi
+done
+
+
+###检索ANI分析中的ref序列
+find ./ -maxdepth 1 -name "*fasta"  |sed "s/.\///g" > z_ani_file_list.txt
+ls *fasta | cut -f1 -d "-" |sort -u > z_recheck_ani_species
+cat z_recheck_ani_species |while read id; do find /data_tngs/common_database/genome/download_genome/ -name "*${id}*fna*"; done >> z_ani_file_list.txt
+
+base=$(basename $(pwd))
+cat z_recheck_ani_species |while read id; do find /data_tngs/common_database/genome/download_genome/ -name "*${id}*fna*"; done > z_ani_ref_"$base"_list.txt
+
+
+
+### 二期脚本20230920
+grep -v "/" z_ani_file_list.txt > query_list.txt
+grep "/" z_ani_file_list.txt  > ref_list.txt
+
+
+# -eq：等于 (equal)
+# -ne：不等于 (not equal)
+# -lt：小于 (less than)
+# -le：小于等于 (less than or equal)
+# -gt：大于 (greater than)
+# -ge：大于等于 (greater than or equal)
+
+
+
+# 使用wc命令获取文件的行数，并将结果存储在变量line_count中
+query_count=$(wc -l < query_list.txt)
+ref_count=$(wc -l < ref_list.txt)
+current_dir=$(pwd)
+
+# 期望的行数
+expected_lines=100  
+
+# 使用if语句比较行数，并分割query_list.txt和ref_list.txt文件
+if [ "$query_count" -le "$expected_lines" ]; then
+    echo "pass"
+else
+    echo "在$current_dir 中query文件行数大于100。"
+    split -a 4 -d -l 50 query_list.txt sub_query
+fi
+
+if [ "$ref_count" -le "$expected_lines" ]; then
+    echo "pass"
+else
+    echo "在$current_dir 中ref文件行数大于100。"
+    split -a 4 -d -l 50 ref_list.txt sub_ref
+fi
+
+
+
+if ls sub_query* 1>/dev/null 2>&1 && ls sub_ref* 1>/dev/null 2>&1; then
+    query_i=$(ls sub_query* |awk -F 'sub_query' '{print $2}')
+    ref_j=$(ls sub_ref* |awk -F 'sub_ref' '{print $2}')
+    for i in $query_i; do 
+        for j in $ref_j; do
+            echo "/home/wangyang/software/fastANI --refList sub_ref${j} --queryList sub_query${i} --fragLen 300 --threads 16 --matrix --output ./z_ani_ref${j}_vs_query${i}" >> z_ani_bin_work.sh
+        done
+    done
+elif ls sub_query* 1>/dev/null 2>&1 && ! ls sub_ref* 1>/dev/null 2>&1; then
+    query_i=$(ls sub_query* |awk -F 'sub_query' '{print $2}')
+    for i in $query_i; do
+        echo "/home/wangyang/software/fastANI --refList ref_list.txt --queryList sub_query${i} --fragLen 300 --threads 16 --matrix --output ./z_ani_ref_vs_query${i}" >> z_ani_bin_work.sh
+    done
+elif ! ls sub_query* 1>/dev/null 2>&1 && ls sub_ref* 1>/dev/null 2>&1; then
+    ref_j=$(ls sub_ref* |awk -F 'sub_ref' '{print $2}')
+    for j in $ref_j; do
+        echo "/home/wangyang/software/fastANI --refList sub_ref${j} --queryList query_list.txt --fragLen 300 --threads 16 --matrix --output ./z_ani_ref${j}_vs_query" >> z_ani_bin_work.sh
+    done
+else
+    echo "/home/wangyang/software/fastANI --refList ref_list.txt --queryList query_list.txt --fragLen 300 --threads 16 --matrix --output ./z_ani_ref_vs_query" >> z_ani_bin_work.sh
+fi 
+
